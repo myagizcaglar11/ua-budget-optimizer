@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UA Budget Optimizer</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface-1: #fcfcfb; --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19; --text-primary: #f0efec; --text-secondary: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.viz-root { background: var(--page); color: var(--text-primary); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; min-height: 100vh; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 20px 64px; display: flex; flex-direction: column; gap: 20px; }
+h1 { font-size: 28px; margin: 0; } h2 { font-size: 18px; margin: 0 0 4px; } p { margin: 0; }
+.sub { color: var(--text-secondary); } .muted { color: var(--muted); font-size: 13px; }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; align-items: end; }
+.controls label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.controls output { font-size: 18px; font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+input[type=range] { width: 100%; }
+select, button, .file { font: inherit; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); cursor: pointer; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.tile .big { font-size: 28px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); margin: 6px 0 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+svg text { fill: var(--muted); font-size: 12px; }
+.chart-wrap { position: relative; }
+.tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px; box-shadow: 0 4px 16px rgba(0,0,0,.12); display: none; font-variant-numeric: tabular-nums; min-width: 180px; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--grid); text-align: right; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--text-secondary); font-weight: 500; }
+.warn { color: var(--critical); font-weight: 600; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+details summary { cursor: pointer; color: var(--text-secondary); }
+code { font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <header style="display:flex;flex-direction:column;gap:6px">
+    <h1>UA Budget Optimizer</h1>
+    <p class="sub">How should a launch budget be split across ad networks, DSPs and social networks? Every extra dollar on a network buys installs at a higher CPI, so the best split balances volume against payback.</p>
+    <p class="muted">Sample data with made-up networks. Load your own CSV below; it stays in your browser.</p>
+  </header>
+
+  <section class="card">
+    <div class="controls">
+      <label>Goal
+        <select id="objective">
+          <option value="installs">Most installs at a ROAS target</option>
+          <option value="profit">Most net revenue by the window</option>
+        </select>
+      </label>
+      <label>Budget <output id="budget-out"></output><input id="budget" type="range" min="1" max="30" step="0.5" value="10"></label>
+      <label id="roas-wrap">ROAS target <output id="roas-out"></output><input id="roas" type="range" min="50" max="200" step="5" value="100"></label>
+      <label>Payback window
+        <select id="window">
+          <option value="30">Day 30</option><option value="60">Day 60</option><option value="90">Day 90</option><option value="180">Day 180 (projected)</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>Where the money goes</h2>
+    <p class="muted" id="alloc-note"></p>
+    <div class="legend" id="legend"></div>
+    <div class="chart-wrap"><svg id="alloc" width="100%" role="img" aria-label="Budget per network"></svg><div class="tip" id="tip1"></div></div>
+    <details style="margin-top:10px"><summary>Show as table</summary><div id="table" style="margin-top:8px"></div></details>
+  </section>
+
+  <section class="card">
+    <h2>The trade-off: installs vs. ROAS target</h2>
+    <p class="muted">Each point re-solves the split for that target at the current budget and window. A stricter target pushes money to high-ARPU networks, which costs installs.</p>
+    <div class="chart-wrap"><svg id="frontier" width="100%" height="280" role="img" aria-label="Installs at each ROAS target"></svg><div class="tip" id="tip2"></div></div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <h2>How it works</h2>
+      <p class="sub">Each +25% of spend on a network raises its CPI by 10% (ad networks), 15% (DSPs) or 20% (social), compounding. So installs grow slower than spend. At the best split, one more dollar is worth the same on every network; the solver finds that point exactly. Day 180 ARPU is projected from days 7–90 with a power curve.</p>
+    <p class="muted" style="margin-top:8px">Code, tests and method: <a href="https://github.com/myagizcaglar11/ua-budget-optimizer">github.com/myagizcaglar11/ua-budget-optimizer</a></p>
+    </div>
+    <div class="card">
+      <h2>Use your own numbers</h2>
+      <p class="sub">CSV columns: <code>name,type,cpi,d1,d7,d15,d30,d60,d90</code>, type = <code>ad_network</code>, <code>dsp</code> or <code>social</code>; CPI and ARPU at a $100,000 baseline spend.</p>
+      <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap"><input type="file" id="file" accept=".csv" class="file"><button id="reset">Back to sample</button></div>
+      <p class="muted" id="file-msg" style="margin-top:6px"></p>
+    </div>
+  </section>
+</main>
+</div>
+
+<script>
+const SAMPLE = `name,type,cpi,d1,d7,d15,d30,d60,d90
+AdNet A,ad_network,6.5,1.0,7.8,16.9,33.5,62.0,83.0
+AdNet B,ad_network,2.8,0.25,1.9,4.1,8.2,15.0,19.8
+AdNet C,ad_network,3.6,0.3,2.1,4.2,8.1,15.1,20.5
+DSP A,dsp,4.4,0.35,2.6,5.6,11.2,21.0,28.0
+DSP B,dsp,6.2,0.9,6.4,14.8,29.5,58.0,84.0
+Social A,social,5.4,1.5,9.0,18.0,33.0,58.0,70.0
+Social B,social,4.6,0.7,4.2,8.0,14.0,24.0,30.0
+Social C,social,3.3,0.9,6.2,12.4,23.5,41.0,52.0`;
+const G = { ad_network: 0.10, dsp: 0.15, social: 0.20 };
+const TYPE_LABEL = { ad_network: 'Ad network', dsp: 'DSP', social: 'Social' };
+const TYPE_VAR = { ad_network: '--series-1', dsp: '--series-2', social: '--series-3' };
+const B0 = 100000;
+const $ = id => document.getElementById(id);
+const css = v => getComputedStyle(document.querySelector('.viz-root')).getPropertyValue(v).trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const money = v => { const sign = v < 0 ? '-' : '', a = Math.abs(v); return sign + (a >= 1e6 ? '$' + (a / 1e6).toFixed(2) + 'M' : a >= 500 ? '$' + Math.round(a / 1e3) + 'K' : '$0'); };
+let NETS = [];
+
+function parse(text) {
+  const [head, ...lines] = text.trim().split(/\r?\n/);
+  const cols = head.split(',').map(s => s.trim());
+  return lines.filter(l => l.trim()).map(l => {
+    const v = l.split(','), row = Object.fromEntries(cols.map((c, i) => [c, (v[i] || '').trim()]));
+    if (!(row.type in G)) throw new Error(`${row.name}: type must be ad_network, dsp or social`);
+    const e = Math.log(1 + G[row.type]) / Math.log(1.25), cpi = +row.cpi;
+    const arpu = {}; for (const d of [1, 7, 15, 30, 60, 90]) if (row['d' + d]) arpu[d] = +row['d' + d];
+    return { name: row.name, type: row.type, cpi, arpu, a: 1 - e, k: Math.pow(B0, e) / cpi, e };
+  });
+}
+function arpuAt(n, day) {
+  if (n.arpu[day] != null) return n.arpu[day];
+  const pts = Object.entries(n.arpu).map(([d, v]) => [+d, v]).filter(([d, v]) => d >= 7 && v > 0);
+  const xs = pts.map(p => Math.log(p[0])), ys = pts.map(p => Math.log(p[1]));
+  const mx = xs.reduce((a, b) => a + b) / xs.length, my = ys.reduce((a, b) => a + b) / ys.length;
+  const b = xs.reduce((s, x, i) => s + (x - mx) * (ys[i] - my), 0) / xs.reduce((s, x) => s + (x - mx) ** 2, 0);
+  return Math.exp(my - b * mx) * Math.pow(day, b);
+}
+const installs = (n, s) => s > 0 ? n.k * Math.pow(s, n.a) : 0;
+const cpiAt = (n, s) => n.cpi * Math.pow(Math.max(s, 1) / B0, n.e);
+
+// Most installs at a ROAS target: (1 + lam*arpu_i) * installs_i'(B_i) = mu
+function spendFor(arpu, lam, mu) { return NETS.map((n, i) => Math.pow((1 + lam * arpu[i]) * n.k * n.a / mu, 1 / (1 - n.a))); }
+function forLambda(arpu, lam, budget) {
+  let lo = 1e-12, hi = 1e6;
+  for (let t = 0; t < 200; t++) { const mu = Math.sqrt(lo * hi); if (spendFor(arpu, lam, mu).reduce((a, b) => a + b) > budget) lo = mu; else hi = mu; }
+  const s = spendFor(arpu, lam, Math.sqrt(lo * hi)), sc = budget / s.reduce((a, b) => a + b);
+  return s.map(x => x * sc);
+}
+const roasOf = (arpu, s, budget) => NETS.reduce((t, n, i) => t + arpu[i] * installs(n, s[i]), 0) / budget;
+function solveInstalls(budget, target, day) {
+  const arpu = NETS.map(n => arpuAt(n, day));
+  let s = forLambda(arpu, 0, budget), binding = false;
+  if (roasOf(arpu, s, budget) < target) {
+    binding = true; let hi = 1;
+    while (roasOf(arpu, forLambda(arpu, hi, budget), budget) < target) { hi *= 4; if (hi > 1e9) return null; }
+    let lo = 0; for (let t = 0; t < 80; t++) { const m = (lo + hi) / 2; if (roasOf(arpu, forLambda(arpu, m, budget), budget) < target) lo = m; else hi = m; }
+    s = forLambda(arpu, hi, budget);
+  }
+  return finish(s, arpu, binding);
+}
+// Most net revenue: arpu_i * installs_i'(B_i) = 1 + nu, spending at most the budget
+function solveProfit(budget, day) {
+  const arpu = NETS.map(n => arpuAt(n, day));
+  const sf = nu => NETS.map((n, i) => Math.pow(arpu[i] * n.k * n.a / (1 + nu), 1 / (1 - n.a)));
+  let s = sf(0);
+  if (s.reduce((a, b) => a + b) > budget) {
+    let lo = 0, hi = 1; while (sf(hi).reduce((a, b) => a + b) > budget) hi *= 2;
+    for (let t = 0; t < 200; t++) { const m = (lo + hi) / 2; if (sf(m).reduce((a, b) => a + b) > budget) lo = m; else hi = m; }
+    s = sf(hi);
+  }
+  return finish(s, arpu, false);
+}
+function finish(s, arpu, binding) {
+  const rows = NETS.map((n, i) => ({ n, spend: s[i], inst: installs(n, s[i]), cpi: cpiAt(n, s[i]), rev: arpu[i] * installs(n, s[i]) }));
+  const spend = s.reduce((a, b) => a + b), inst = rows.reduce((a, r) => a + r.inst, 0), rev = rows.reduce((a, r) => a + r.rev, 0);
+  return { rows, spend, inst, rev, roas: rev / spend, binding };
+}
+
+function render() {
+  const obj = $('objective').value, budget = +$('budget').value * 1e6, target = +$('roas').value / 100, day = +$('window').value;
+  $('budget-out').textContent = money(budget); $('roas-out').textContent = Math.round(target * 100) + '%';
+  $('roas-wrap').style.opacity = obj === 'installs' ? 1 : 0.4; $('roas').disabled = obj !== 'installs';
+  const r = obj === 'installs' ? solveInstalls(budget, target, day) : solveProfit(budget, day);
+  const dl = day === 180 ? 'D180 (projected)' : 'D' + day;
+  if (!r) {
+    $('tiles').innerHTML = `<div class="card tile" style="grid-column:1/-1"><p class="warn">No split reaches ${Math.round(target * 100)}% ${dl} ROAS with this budget.</p><p class="sub">Lower the target, lower the budget or choose a longer window.</p></div>`;
+    $('alloc').innerHTML = ''; $('table').innerHTML = ''; $('alloc-note').textContent = ''; frontier(budget, day, null); return;
+  }
+  const tile = (label, val, note) => `<div class="card tile"><div class="muted">${label}</div><div class="big">${val}</div><div class="muted">${note}</div></div>`;
+  $('tiles').innerHTML =
+    tile('Installs', Math.round(r.inst).toLocaleString(), obj === 'profit' ? `spending ${money(r.spend)} of ${money(budget)}` : 'total across networks') +
+    tile('Average CPI', '$' + (r.spend / r.inst).toFixed(2), 'spend ÷ installs') +
+    tile(`${dl} ROAS`, Math.round(r.roas * 100) + '%', obj === 'installs' ? (r.binding ? 'target is the limit' : 'target not binding') : 'portfolio') +
+    tile(`${dl} net revenue`, money(r.rev - r.spend), 'revenue minus spend');
+  $('alloc-note').textContent = obj === 'installs'
+    ? (r.binding ? `The ${Math.round(target * 100)}% ROAS rule shapes this split: money moves to high-ARPU networks until ROAS lands on the target.` : `ROAS stays above the target, so the split simply maximizes installs.`)
+    : (r.spend < budget - 1 ? `Spending stops at ${money(r.spend)}: beyond that, a dollar would earn back less than a dollar by ${dl}.` : `Each network gets money until its next dollar returns the same by ${dl}.`);
+  alloc(r); table(r, dl); frontier(budget, day, obj === 'installs' ? target : null);
+}
+
+function alloc(r) {
+  const rows = [...r.rows].sort((a, b) => b.spend - a.spend);
+  const svg = $('alloc'), W = svg.clientWidth || 900, L = 110, R = 150, rowH = 34, H = rows.length * rowH + 8;
+  svg.setAttribute('height', H);
+  const max = Math.max(...rows.map(x => x.spend)), x = v => L + (W - L - R) * v / max;
+  let s = '';
+  rows.forEach((row, i) => {
+    const y = 4 + i * rowH, c = css(TYPE_VAR[row.n.type]), w = Math.max(0, x(row.spend) - L);
+    s += `<text x="${L - 10}" y="${y + rowH / 2 + 4}" text-anchor="end" style="fill:${css('--text-secondary')}">${esc(row.n.name)}</text>`;
+    s += `<path d="M${L},${y + 6} h${Math.max(0, w - 4)} a4,4 0 0 1 4,4 v${rowH - 20} a4,4 0 0 1 -4,4 h-${Math.max(0, w - 4)} z" fill="${c}"/>`;
+    s += `<text x="${L + w + 8}" y="${y + rowH / 2 + 4}" style="fill:${css('--text-primary')}">${money(row.spend)} · ${(100 * row.spend / r.spend).toFixed(0)}%</text>`;
+    s += `<rect x="0" y="${y}" width="${W}" height="${rowH}" fill="transparent" data-i="${i}"/>`;
+  });
+  svg.innerHTML = s;
+  const tip = $('tip1');
+  svg.querySelectorAll('rect[data-i]').forEach(el => {
+    el.onmousemove = ev => { const row = rows[+el.dataset.i], b = svg.getBoundingClientRect();
+      tip.innerHTML = `<b>${esc(row.n.name)}</b> <span class="muted">${TYPE_LABEL[row.n.type]}</span><br>Spend ${money(row.spend)}<br>Installs ${Math.round(row.inst).toLocaleString()}<br>CPI $${row.cpi.toFixed(2)} (baseline $${row.n.cpi.toFixed(2)})<br>ROAS ${Math.round(100 * row.rev / row.spend)}%`;
+      tip.style.display = 'block'; tip.style.left = Math.min(ev.clientX - b.left + 12, W - 200) + 'px'; tip.style.top = (ev.clientY - b.top + 12) + 'px'; };
+    el.onmouseleave = () => tip.style.display = 'none';
+  });
+}
+function table(r, dl) {
+  $('table').innerHTML = `<table><tr><th>Network</th><th>Type</th><th>Spend</th><th>Share</th><th>Installs</th><th>CPI</th><th>${dl} ROAS</th></tr>` +
+    [...r.rows].sort((a, b) => b.spend - a.spend).map(x => `<tr><td>${esc(x.n.name)}</td><td>${TYPE_LABEL[x.n.type]}</td><td>${money(x.spend)}</td><td>${(100 * x.spend / r.spend).toFixed(1)}%</td><td>${Math.round(x.inst).toLocaleString()}</td><td>$${x.cpi.toFixed(2)}</td><td>${Math.round(100 * x.rev / x.spend)}%</td></tr>`).join('') + '</table>';
+}
+function frontier(budget, day, current) {
+  const pts = []; for (let t = 50; t <= 200; t += 5) { const r = solveInstalls(budget, t / 100, day); if (r) pts.push([t, r.inst]); }
+  const svg = $('frontier'), W = svg.clientWidth || 900, H = 280, L = 70, R = 24, T = 14, B = 36;
+  if (!pts.length) { svg.innerHTML = `<text x="${L}" y="40">No target between 50% and 200% is reachable.</text>`; return; }
+  const ymax = Math.max(...pts.map(p => p[1])), ymin = Math.min(...pts.map(p => p[1]));
+  const span = ymax - ymin || ymax * 0.1, y0 = Math.max(0, ymin - span * 0.2), y1 = ymax + span * 0.1;
+  const x = t => L + (W - L - R) * (t - 50) / 150, y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
+  let s = '';
+  for (let i = 0; i <= 4; i++) { const v = y0 + (y1 - y0) * i / 4; s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css(i ? '--grid' : '--axis')}"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${Math.round(v / 1000)}K</text>`; }
+  for (let t = 50; t <= 200; t += 25) s += `<text x="${x(t)}" y="${H - 12}" text-anchor="middle">${t}%</text>`;
+  s += `<path d="${pts.map((p, i) => (i ? 'L' : 'M') + x(p[0]) + ',' + y(p[1])).join('')}" fill="none" stroke="${css('--series-1')}" stroke-width="2" stroke-linejoin="round"/>`;
+  const last = pts[pts.length - 1][0];
+  if (last < 200) s += `<line x1="${x(last + 5)}" x2="${x(last + 5)}" y1="${T}" y2="${H - B}" stroke="${css('--axis')}" stroke-dasharray="3 4"/><text x="${x(last + 5) + 8}" y="${T + 16}" style="fill:${css('--text-secondary')}">Not reachable above ${last}%</text>`;
+  if (current != null) { const p = pts.find(p => Math.abs(p[0] - current * 100) < 0.01); if (p) s += `<circle cx="${x(p[0])}" cy="${y(p[1])}" r="5" fill="${css('--series-1')}" stroke="${css('--surface-1')}" stroke-width="2"/>`; }
+  s += `<line id="fx" y1="${T}" y2="${H - B}" stroke="${css('--axis')}" visibility="hidden"/><rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="transparent" id="fhit"/>`;
+  svg.innerHTML = s;
+  const tip = $('tip2'), hit = svg.querySelector('#fhit'), fx = svg.querySelector('#fx');
+  hit.onmousemove = ev => { const b = svg.getBoundingClientRect(), t = 50 + Math.round(((ev.clientX - b.left - L) / (W - L - R) * 150) / 5) * 5;
+    const p = pts.find(q => q[0] === t); if (!p) return; fx.setAttribute('x1', x(t)); fx.setAttribute('x2', x(t)); fx.setAttribute('visibility', 'visible');
+    tip.innerHTML = `ROAS target <b>${t}%</b><br>${Math.round(p[1]).toLocaleString()} installs`; tip.style.display = 'block';
+    tip.style.left = Math.min(x(t) + 12, W - 190) + 'px'; tip.style.top = (y(p[1]) - 50) + 'px'; };
+  hit.onmouseleave = () => { tip.style.display = 'none'; fx.setAttribute('visibility', 'hidden'); };
+}
+
+function load(text, label) {
+  try { NETS = parse(text); $('file-msg').textContent = label; }
+  catch (e) { $('file-msg').textContent = 'Could not read the file: ' + e.message; return; }
+  $('legend').innerHTML = Object.keys(G).filter(t => NETS.some(n => n.type === t)).map(t => `<span><span class="sw" style="background:var(${TYPE_VAR[t]})"></span>${TYPE_LABEL[t]}</span>`).join('');
+  render();
+}
+['objective', 'budget', 'roas', 'window'].forEach(id => $(id).addEventListener('input', render));
+$('file').onchange = ev => { const f = ev.target.files[0]; if (f) f.text().then(t => load(t, `Using ${f.name} (${f.size} bytes, read locally)`)); };
+$('reset').onclick = () => { $('file').value = ''; load(SAMPLE, 'Using the sample data.'); };
+window.addEventListener('resize', render);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', render);
+load(SAMPLE, 'Using the sample data.');
+</script>
+</body>
+</html>
