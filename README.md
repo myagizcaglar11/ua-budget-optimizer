@@ -64,6 +64,13 @@ The web page (`docs/index.html`) runs the same solver in JavaScript. A CSV you l
 - Day-180 ARPU is an extrapolation and can be far off for channels with unusual retention.
 - No OS or country split: that would multiply the variables but not change the method.
 
+## What I learned
+
+- **The best split follows one rule.** When I solved this in Excel, Solver gave me an answer without a reason. Rebuilding it showed the reason: at the optimum, one more dollar is worth the same on every network. That makes the result easy to explain and to sanity-check.
+- **A constraint has a price.** The 100% ROAS rule costs installs, and the model says how many. On the sample data, going from no rule to 100% costs about 4% of installs, and targets above roughly 105% cannot be reached at all.
+- **Two independent answers are better than one.** The model matched both my Excel result and a general-purpose solver. Only then did I trust it enough to build the page on top.
+- **Cheap installs are not the goal by themselves.** With a 180-day window the best split moves toward networks with expensive but valuable users, the opposite of the 30-day answer.
+
 ## About
 
 Built by Mehmet Yağız Çağlar (ITU Industrial Engineering) with the help of AI tools, as a follow-up to a performance marketing case study: turning an Excel Solver model into a tested, reusable tool. See also my [Match-3 Review Tracker](https://github.com/myagizcaglar11/review-tracker).
